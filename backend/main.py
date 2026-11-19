@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 
-from agent import review
+from agent import review, security_scan
 from models import ReviewRequest, ReviewResponse
 
 app = FastAPI(
@@ -17,7 +17,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
@@ -42,6 +42,17 @@ def review_code(request: ReviewRequest, _: None = Security(pruefe_api_key)):
         raise HTTPException(status_code=400, detail="Code darf nicht leer sein.")
     try:
         report = review(request.code, request.dateiname)
+        return ReviewResponse(dateiname=request.dateiname, report=report)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/security-scan", response_model=ReviewResponse)
+def security_scan_code(request: ReviewRequest, _: None = Security(pruefe_api_key)):
+    if not request.code.strip():
+        raise HTTPException(status_code=400, detail="Code darf nicht leer sein.")
+    try:
+        report = security_scan(request.code, request.dateiname)
         return ReviewResponse(dateiname=request.dateiname, report=report)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
