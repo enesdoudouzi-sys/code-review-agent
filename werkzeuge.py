@@ -3,10 +3,15 @@
 import re
 from pathlib import Path
 
+_BASISVERZEICHNIS = Path(".").resolve()
+
 
 def datei_lesen(pfad: str) -> dict:
     try:
-        inhalt = Path(pfad).read_text(encoding="utf-8")
+        ziel = Path(pfad).resolve()
+        if not str(ziel).startswith(str(_BASISVERZEICHNIS)):
+            return {"fehler": "Zugriff verweigert: Pfad außerhalb des erlaubten Verzeichnisses."}
+        inhalt = ziel.read_text(encoding="utf-8")
         return {"inhalt": inhalt, "zeilen": inhalt.count("\n") + 1}
     except FileNotFoundError:
         return {"fehler": f"Datei nicht gefunden: {pfad}"}

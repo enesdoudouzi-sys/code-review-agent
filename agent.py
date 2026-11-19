@@ -8,6 +8,7 @@ import anthropic
 from werkzeuge import WERKZEUG_DEFINITIONEN, WERKZEUG_MAP
 
 MODEL = "claude-sonnet-4-6"
+MAX_ITERATIONEN = 10
 
 SYSTEM_PROMPT = """Du bist ein erfahrener Code-Reviewer.
 Analysiere den bereitgestellten Code gründlich und erstelle einen strukturierten Report mit drei Abschnitten:
@@ -29,7 +30,7 @@ def review(dateipfad: str) -> str:
         }
     ]
 
-    while True:
+    for _ in range(MAX_ITERATIONEN):
         antwort = client.messages.create(
             model=MODEL,
             max_tokens=4096,
@@ -64,6 +65,8 @@ def review(dateipfad: str) -> str:
                     }
                 )
             nachrichten.append({"role": "user", "content": werkzeug_ergebnisse})
+
+    return "(Maximale Iterationszahl erreicht)"
 
 
 if __name__ == "__main__":

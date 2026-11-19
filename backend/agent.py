@@ -1,4 +1,4 @@
-"""Code-Review-Agent – agentic loop mit Claude API und Tool Use."""
+"""Code-Review-Agent – agentic loop mit LLM-API und Tool Use."""
 
 import json
 
@@ -7,6 +7,7 @@ import anthropic
 from werkzeuge import WERKZEUG_DEFINITIONEN, WERKZEUG_MAP
 
 MODEL = "claude-sonnet-4-6"
+MAX_ITERATIONEN = 10
 
 SYSTEM_PROMPT = """Du bist ein erfahrener Senior-Software-Ingenieur und Code-Reviewer.
 Analysiere den bereitgestellten Code gründlich mithilfe der verfügbaren Werkzeuge.
@@ -34,7 +35,7 @@ def review(code: str, dateiname: str = "code.py") -> str:
         }
     ]
 
-    while True:
+    for _ in range(MAX_ITERATIONEN):
         antwort = client.messages.create(
             model=MODEL,
             max_tokens=4096,
@@ -66,3 +67,5 @@ def review(code: str, dateiname: str = "code.py") -> str:
                     }
                 )
             nachrichten.append({"role": "user", "content": ergebnisse})
+
+    return "(Maximale Iterationszahl erreicht)"

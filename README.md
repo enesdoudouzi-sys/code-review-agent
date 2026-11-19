@@ -1,136 +1,43 @@
-# 🤖 code-review-agent
+# 🤖 KI Code-Review-Agent
 
-> Ein KI-Agent, der Code-Dateien automatisch reviewt – powered by Claude (Anthropic).
+[![CI](https://github.com/enesdoudouzi-sys/code-review-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/enesdoudouzi-sys/code-review-agent/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-teal?logo=fastapi)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-blue?logo=react)](https://reactjs.org)
+[![Docker](https://img.shields.io/badge/Docker-Compose-blue?logo=docker)](https://docs.docker.com/compose)
 
-![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
-![Claude](https://img.shields.io/badge/Claude-Sonnet%204.6-D97706?style=flat-square)
-![License](https://img.shields.io/badge/Lizenz-MIT-22C55E?style=flat-square)
-![Status](https://img.shields.io/badge/Status-In%20Entwicklung-F59E0B?style=flat-square)
+Ein autonomer KI-Agent, der Quellcode automatisch analysiert und strukturierte Reviews mit Sicherheits-, Stil- und Logik-Feedback generiert — gebaut auf einem echten agentischen Loop mit Tool Use.
 
----
-
-## Was macht dieser Agent?
-
-Der Agent bekommt eine Code-Datei – und erledigt den Rest selbst.  
-Er entscheidet eigenständig, welche Werkzeuge er aufruft, liest den Code, analysiert ihn und liefert einen strukturierten Review-Report.
-
-```
-$ python agent.py mein_code.py
-
-──────────────────────────────────────────────────
-## 1. Sicherheit
-  ⚠ Zeile 14: eval() mit externem Input – potenziell gefährlich
-
-## 2. Stil
-  • Funktionsname `x` zu unspezifisch → umbenennen in `berechne_summe`
-  • Fehlende Typannotationen in 3 Funktionen
-
-## 3. Logik
-  ✓ Keine kritischen Fehler gefunden
-  • Division ohne Nullprüfung in Zeile 42
-──────────────────────────────────────────────────
-```
-
----
-
-## Architektur
-
-```
-┌─────────────────────────────────────────┐
-│           Nutzer gibt Datei an           │
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│           KI-Agent  (Claude)             │
-│                                          │
-│  entscheidet selbst, was er als          │
-│  Nächstes braucht (agentic loop)         │
-└──────┬──────────────────────┬───────────┘
-       │                      │
-       ▼                      ▼
-┌─────────────┐       ┌──────────────────┐
-│ datei_lesen │       │  muster_suchen   │
-│  Dateiinhalt│       │  Regex im Code   │
-│  + Zeilenzahl       │  → Treffer-Liste │
-└──────┬──────┘       └────────┬─────────┘
-       │                       │
-       └──────────┬────────────┘
-                  ▼
-┌─────────────────────────────────────────┐
-│         Strukturierter Report            │
-│   🔒 Sicherheit  ✏ Stil  🧠 Logik       │
-└─────────────────────────────────────────┘
-```
-
----
-
-## Quickstart
+## Quickstart (Docker)
 
 ```bash
-# 1. Repo klonen
-git clone https://github.com/enesdoudouzi-sys/code-review-agent.git
+git clone https://github.com/enesdoudouzi-sys/code-review-agent
 cd code-review-agent
-
-# 2. Virtuelle Umgebung
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-
-# 3. Abhängigkeiten installieren
-pip install -r requirements.txt
-
-# 4. API-Key setzen
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# 5. Loslegen
-python agent.py mein_code.py
+cp .env.example .env          # ANTHROPIC_API_KEY eintragen
+docker-compose up --build
 ```
 
----
+→ Frontend: http://localhost:5173
+→ API Docs: http://localhost:8000/docs
 
-## Projektstruktur
+## Tests
 
-```
-code-review-agent/
-│
-├── agent.py          ← Haupt-Agent mit agentic loop
-├── werkzeuge.py      ← Werkzeuge: datei_lesen, muster_suchen
-├── requirements.txt  ← anthropic, httpx
-└── README.md
+```bash
+pip install pytest httpx
+pytest tests/ -v
 ```
 
----
+## Deployment
 
-## Tech Stack
+**Backend → Render:**
+Root Directory: `backend`, Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
-| Komponente | Details |
-|---|---|
-| Sprache | Python 3.11+ |
-| KI-Modell | Claude Sonnet 4.6 (Anthropic) |
-| SDK | [anthropic-sdk-python](https://github.com/anthropics/anthropic-sdk-python) |
-| Muster | Agentic Loop mit Tool Use |
+**Frontend → Vercel:**
+Root Directory: `frontend`, Env: `VITE_API_URL` = Render-URL
 
----
+## Sicherheitsfeatures
 
-## Team-Workflow
-
-```
-main
- │
- ├── feature/sicherheits-check   ← Mitglied A
- ├── feature/stil-analyse         ← Mitglied B
- │
- └── Pull Request → Review → Merge
-```
-
-1. `git checkout -b feature/mein-feature`
-2. Änderungen entwickeln & committen
-3. Pull Request öffnen
-4. Gegenseitiges Code-Review
-5. Merge in `main`
-
----
-
-## Lizenz
-
-MIT © 2026 enesdoudouzi-sys
+- Path Traversal Protection in `datei_lesen()`
+- Bounded Iteration: max. 10 Iterationen im agentischen Loop
+- Optionale X-API-Key-Auth via `API_KEY` Umgebungsvariable
+- Pydantic v2 Input-Validierung
