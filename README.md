@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/enesdoudouzi-sys/code-review-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/enesdoudouzi-sys/code-review-agent/actions/workflows/ci.yml)
 [![Backend](https://img.shields.io/badge/Backend-Live%20on%20Render-46E3B7?logo=render)](https://code-review-agent-f9aa.onrender.com/health)
-[![Frontend](https://img.shields.io/badge/Frontend-Live%20on%20Vercel-000000?logo=vercel)](https://code-review-agent-lgsd-mp1kz2dvj.vercel.app)
+[![Frontend](https://img.shields.io/badge/Frontend-Live%20on%20Vercel-000000?logo=vercel)](https://code-review-agent-js5w.vercel.app)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://reactjs.org)
@@ -15,7 +15,7 @@ Ein autonomer KI-Agent, der Quellcode automatisch analysiert und strukturierte R
 
 | Service | URL |
 |---------|-----|
-| **Frontend** | https://code-review-agent-lgsd-mp1kz2dvj.vercel.app |
+| **Frontend** | https://code-review-agent-js5w.vercel.app |
 | **Backend API** | https://code-review-agent-f9aa.onrender.com |
 | **API Docs** | https://code-review-agent-f9aa.onrender.com/docs |
 
