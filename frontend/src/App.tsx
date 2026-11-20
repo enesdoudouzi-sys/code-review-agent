@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { CodeInput } from './components/CodeInput'
+import { HistoryPanel } from './components/HistoryPanel'
 import { ReviewResult } from './components/ReviewResult'
 
 interface ReviewResponse {
@@ -96,6 +97,7 @@ export default function App() {
           >
             API Docs ↗
           </a>
+          <HistoryPanel apiBase={apiBase} />
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             <span className="text-xs text-gray-500">API online</span>
