@@ -18,6 +18,13 @@ Ein autonomer KI-Agent, der Quellcode automatisch analysiert und strukturierte R
 | **Frontend** | https://code-review-agent-js5w.vercel.app |
 | **Backend API** | https://code-review-agent-f9aa.onrender.com |
 | **API Docs** | https://code-review-agent-f9aa.onrender.com/docs |
+| **Review-Historie** | https://code-review-agent-f9aa.onrender.com/history |
+
+## 📸 Screenshots
+
+![Code Review Agent UI](docs/screenshot-ui.png)
+
+> IDE-Style Interface mit Code Review und Security Scan Modi, agentic KI-Loop powered by Anthropic LLM API
 
 ## 🏗️ Architektur
 
