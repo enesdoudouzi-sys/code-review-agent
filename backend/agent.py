@@ -4,8 +4,8 @@ import json
 import os
 from typing import Generator
 
-import google.generativeai as genai
-from google.generativeai import protos
+from google import genai
+from google.genai import types
 
 from werkzeuge import WERKZEUG_DEFINITIONEN, WERKZEUG_MAP
 
@@ -29,37 +29,32 @@ Fehler, fehlende Edge-Case-Behandlung, Verbesserungsvorschläge.
 Sei präzise und actionable. Nutze Bullet Points."""
 
 
-def _build_tool() -> protos.Tool:
+def _build_tool() -> types.Tool:
     """Konvertiert unsere Werkzeug-Definitionen in eine Gemini Tool-Definition."""
     declarations = []
     for w in WERKZEUG_DEFINITIONEN:
         props = {}
         for name, schema in w["input_schema"]["properties"].items():
-            props[name] = protos.Schema(
-                type=protos.Type.STRING,
+            props[name] = types.Schema(
+                type=types.Type.STRING,
                 description=schema.get("description", ""),
             )
         declarations.append(
-            protos.FunctionDeclaration(
+            types.FunctionDeclaration(
                 name=w["name"],
                 description=w["description"],
-                parameters=protos.Schema(
-                    type=protos.Type.OBJECT,
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
                     properties=props,
                     required=w["input_schema"].get("required", []),
                 ),
             )
         )
-    return protos.Tool(function_declarations=declarations)
+    return types.Tool(function_declarations=declarations)
 
 
-def _get_model() -> genai.GenerativeModel:
-    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-    return genai.GenerativeModel(
-        model_name=MODEL,
-        system_instruction=SYSTEM_PROMPT,
-        tools=[_build_tool()],
-    )
+def _get_client() -> genai.Client:
+    return genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
 
 
 def _ausfuehren(name: str, args: dict) -> dict:
@@ -69,62 +64,62 @@ def _ausfuehren(name: str, args: dict) -> dict:
     return {"fehler": f"Unbekanntes Werkzeug: {name}"}
 
 
-def _fn_calls(antwort) -> list:
-    """Gibt alle Teile mit einem echten function_call zurück."""
+def _fn_calls(response) -> list:
+    """Gibt alle Parts mit einem echten function_call zurück."""
     result = []
-    for part in antwort.parts:
-        try:
-            if part.function_call.name:
-                result.append(part)
-        except Exception:
-            pass
+    try:
+        for part in response.candidates[0].content.parts:
+            if part.function_call and part.function_call.name:
+                result.append(part.function_call)
+    except Exception:
+        pass
     return result
 
 
 def review(code: str, dateiname: str = "code.py") -> str:
     """Führt einen vollständigen Code-Review durch und gibt den Report zurück."""
-    model = _get_model()
-    contents = [
-        {
-            "role": "user",
-            "parts": [f"Bitte reviewe folgenden Code aus der Datei `{dateiname}`:\n\n```\n{code}\n```"],
-        }
-    ]
+    client = _get_client()
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        tools=[_build_tool()],
+    )
+    contents = [f"Bitte reviewe folgenden Code aus der Datei `{dateiname}`:\n\n```\n{code}\n```"]
 
     for _ in range(MAX_ITERATIONEN):
-        antwort = model.generate_content(contents)
-        contents.append({"role": "model", "parts": antwort.parts})
+        antwort = client.models.generate_content(
+            model=MODEL,
+            contents=contents,
+            config=config,
+        )
 
         aufrufe = _fn_calls(antwort)
         if not aufrufe:
             return antwort.text
 
-        fn_responses = []
-        for part in aufrufe:
-            fc = part.function_call
+        # Tool-Ergebnisse sammeln und als nächste Nachricht anhängen
+        contents.append(antwort.candidates[0].content)
+        fn_parts = []
+        for fc in aufrufe:
             ergebnis = _ausfuehren(fc.name, dict(fc.args))
-            fn_responses.append(
-                protos.Part(
-                    function_response=protos.FunctionResponse(
-                        name=fc.name,
-                        response={"result": json.dumps(ergebnis, ensure_ascii=False)},
-                    )
+            fn_parts.append(
+                types.Part.from_function_response(
+                    name=fc.name,
+                    response={"result": json.dumps(ergebnis, ensure_ascii=False)},
                 )
             )
-        contents.append({"role": "user", "parts": fn_responses})
+        contents.append(types.Content(role="user", parts=fn_parts))
 
     return "(Max. Iterationen erreicht)"
 
 
 def review_stream(code: str, dateiname: str = "code.py") -> Generator[str, None, None]:
     """Streamt den Review-Prozess als Server-Sent Events."""
-    model = _get_model()
-    contents = [
-        {
-            "role": "user",
-            "parts": [f"Bitte reviewe folgenden Code aus der Datei `{dateiname}`:\n\n```\n{code}\n```"],
-        }
-    ]
+    client = _get_client()
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        tools=[_build_tool()],
+    )
+    contents = [f"Bitte reviewe folgenden Code aus der Datei `{dateiname}`:\n\n```\n{code}\n```"]
 
     def event(data: dict) -> str:
         return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -134,8 +129,11 @@ def review_stream(code: str, dateiname: str = "code.py") -> Generator[str, None,
     for iteration in range(MAX_ITERATIONEN):
         yield event({"type": "thinking", "iteration": iteration + 1})
 
-        antwort = model.generate_content(contents)
-        contents.append({"role": "model", "parts": antwort.parts})
+        antwort = client.models.generate_content(
+            model=MODEL,
+            contents=contents,
+            config=config,
+        )
 
         aufrufe = _fn_calls(antwort)
         if not aufrufe:
@@ -143,26 +141,22 @@ def review_stream(code: str, dateiname: str = "code.py") -> Generator[str, None,
             yield event({"type": "done"})
             return
 
-        fn_responses = []
-        for part in aufrufe:
-            fc = part.function_call
+        contents.append(antwort.candidates[0].content)
+        fn_parts = []
+        for fc in aufrufe:
             args = dict(fc.args)
-
             yield event({"type": "tool_call", "name": fc.name, "input": args})
 
             ergebnis = _ausfuehren(fc.name, args)
-
             yield event({"type": "tool_result", "name": fc.name, "result": ergebnis})
 
-            fn_responses.append(
-                protos.Part(
-                    function_response=protos.FunctionResponse(
-                        name=fc.name,
-                        response={"result": json.dumps(ergebnis, ensure_ascii=False)},
-                    )
+            fn_parts.append(
+                types.Part.from_function_response(
+                    name=fc.name,
+                    response={"result": json.dumps(ergebnis, ensure_ascii=False)},
                 )
             )
-        contents.append({"role": "user", "parts": fn_responses})
+        contents.append(types.Content(role="user", parts=fn_parts))
 
     yield event({"type": "error", "message": "Max. Iterationen erreicht"})
 

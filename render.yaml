@@ -2,11 +2,22 @@ services:
   - type: web
     name: code-review-agent-api
     runtime: python
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: ANTHROPIC_API_KEY
+      - key: GOOGLE_API_KEY
         sync: false
-      - key: PYTHON_VERSION
-        value: 3.11.0
+
+  - type: web
+    name: code-review-agent-ui
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          name: code-review-agent-api
+          type: web
+          property: host

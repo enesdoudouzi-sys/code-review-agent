@@ -19,6 +19,8 @@ interface AgentStep {
   detail?: string
 }
 
+const API_BASE = import.meta.env.VITE_API_URL ? `https://${import.meta.env.VITE_API_URL}` : ''
+
 const TOOL_LABELS: Record<string, string> = {
   code_analysieren: 'Code analysieren',
   muster_suchen: 'Muster suchen',
@@ -42,7 +44,7 @@ export default function App() {
     setSteps([])
 
     try {
-      const res = await fetch('/review/stream', {
+      const res = await fetch(`${API_BASE}/review/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, dateiname }),
