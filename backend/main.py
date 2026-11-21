@@ -1,102 +1,123 @@
-"""FastAPI Backend für den KI Code-Review & Security-Scan Agent."""
+"""FastAPI Backend für den Code-Review-Agent."""
 
-import os
+import re
 
-from fastapi import FastAPI, HTTPException, Security
+import httpx
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import APIKeyHeader
+from fastapi.responses import StreamingResponse
 
-from agent import review, security_scan
-from database import get_history, init_db, save_review
-from models import ReviewRequest, ReviewResponse
+from agent import review, review_stream
+from models import (
+    MultiReviewRequest,
+    MultiReviewResponse,
+    PRRequest,
+    ReviewRequest,
+    ReviewResponse,
+)
 
 app = FastAPI(
-    title="KI Code-Review-Agent API",
-    description=(
-        "Automatisierter Code-Review und Security-Scan powered by Anthropic LLM API. "
-        "Verwendet einen agentischen Loop mit Tool Use für strukturierte Markdown-Reports. "
-        "Endpoints: POST /review (Code-Review), POST /security-scan (OWASP-basierter Security Scan), "
-        "GET /history (letzte Analysen), GET /health (Status)."
-    ),
+    title="Code Review Agent API",
+    description="KI-gestützter Code-Review mit Claude",
     version="2.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["POST", "GET"],
-    allow_headers=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-
-def pruefe_api_key(api_key: str | None = Security(_api_key_header)) -> None:
-    erwarteter_key = os.getenv("API_KEY")
-    if erwarteter_key and api_key != erwarteter_key:
-        raise HTTPException(status_code=401, detail="Ungültiger oder fehlender X-API-Key-Header.")
-
-
-@app.on_event("startup")
-def startup():
-    init_db()
-
-
-@app.get("/health", summary="Health Check", tags=["Status"])
+@app.get("/health")
 def health():
-    """Gibt den API-Status zurück. Wird von Render als Health-Check-Endpoint genutzt."""
     return {"status": "ok", "version": "2.0.0"}
 
 
-@app.post(
-    "/review",
-    response_model=ReviewResponse,
-    summary="Code-Review starten",
-    tags=["Review"],
-)
-def review_code(request: ReviewRequest, _: None = Security(pruefe_api_key)):
-    """
-    Analysiert den übergebenen Code und erstellt einen strukturierten Review-Report.
-
-    Der KI-Agent durchläuft einen agentischen Loop (max. 10 Iterationen) und verwendet
-    Tool Use um den Code zu analysieren. Der Report enthält Sektionen zu Sicherheit,
-    Stil und Logik als Markdown.
-    """
+@app.post("/review", response_model=ReviewResponse)
+def review_code(request: ReviewRequest):
+    """Standard Review — gibt fertigen Report zurück."""
     if not request.code.strip():
         raise HTTPException(status_code=400, detail="Code darf nicht leer sein.")
     try:
         report = review(request.code, request.dateiname)
-        save_review(request.dateiname, "review", report)
         return ReviewResponse(dateiname=request.dateiname, report=report)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post(
-    "/security-scan",
-    response_model=ReviewResponse,
-    summary="Security Scan (OWASP)",
-    tags=["Security"],
-)
-def security_scan_code(request: ReviewRequest, _: None = Security(pruefe_api_key)):
-    """
-    Führt einen OWASP-basierten Security Scan durch.
-
-    Analysiert den Code auf Sicherheitslücken nach OWASP Top 10:
-    SQL Injection, Command Injection, Path Traversal, XSS, CSRF und weitere.
-    Jede Schwachstelle wird mit CVSS-Schweregrad bewertet (Kritisch / Hoch / Mittel / Niedrig).
-    """
+@app.post("/review/stream")
+def review_code_stream(request: ReviewRequest):
+    """Streaming Review — sendet Live-Events während der Agent arbeitet."""
     if not request.code.strip():
         raise HTTPException(status_code=400, detail="Code darf nicht leer sein.")
+    return StreamingResponse(
+        review_stream(request.code, request.dateiname),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/review/multi", response_model=MultiReviewResponse)
+def review_multi(request: MultiReviewRequest):
+    """Reviewt mehrere Dateien auf einmal."""
+    if not request.dateien:
+        raise HTTPException(status_code=400, detail="Mindestens eine Datei erforderlich.")
+    if len(request.dateien) > 10:
+        raise HTTPException(status_code=400, detail="Maximal 10 Dateien pro Anfrage.")
+
+    reviews = []
+    for datei in request.dateien:
+        if not datei.code.strip():
+            continue
+        try:
+            report = review(datei.code, datei.dateiname)
+            reviews.append(ReviewResponse(dateiname=datei.dateiname, report=report))
+        except Exception as e:
+            reviews.append(ReviewResponse(dateiname=datei.dateiname, report=f"Fehler: {e}", status="error"))
+
+    return MultiReviewResponse(reviews=reviews, dateien_gesamt=len(reviews))
+
+
+@app.post("/review/pr")
+def review_pr(request: PRRequest):
+    """Reviewt alle geänderten Python-Dateien eines GitHub Pull Requests."""
+    match = re.match(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)", request.pr_url)
+    if not match:
+        raise HTTPException(status_code=400, detail="Ungültige GitHub PR-URL. Format: https://github.com/owner/repo/pull/123")
+
+    owner, repo, pull_number = match.groups()
+    api_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/files"
+
     try:
-        report = security_scan(request.code, request.dateiname)
-        save_review(request.dateiname, "security", report)
-        return ReviewResponse(dateiname=request.dateiname, report=report)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        with httpx.Client(timeout=15) as client:
+            response = client.get(api_url, headers={"Accept": "application/vnd.github.v3+json"})
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail="PR nicht gefunden. Nur öffentliche Repos werden unterstützt.")
+            response.raise_for_status()
+            dateien = response.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"GitHub API nicht erreichbar: {e}")
 
+    py_dateien = [d for d in dateien if d["filename"].endswith(".py") and d.get("status") != "removed"]
+    if not py_dateien:
+        return {"message": "Keine Python-Dateien in diesem PR gefunden.", "reviews": []}
 
-@app.get("/history", summary="Analyse-Historie", tags=["Status"])
-def history(limit: int = 20):
-    """Gibt die letzten Analysen zurück (max. 20). Jeder Eintrag enthält Dateiname, Modus, Zeitstempel und Vorschau."""
-    return get_history(limit)
+    reviews = []
+    for datei in py_dateien[:5]:
+        try:
+            with httpx.Client(timeout=15) as client:
+                code_response = client.get(datei["raw_url"])
+                code = code_response.text
+            report = review(code, datei["filename"])
+            reviews.append({"dateiname": datei["filename"], "report": report, "status": "success"})
+        except Exception as e:
+            reviews.append({"dateiname": datei["filename"], "report": f"Fehler: {e}", "status": "error"})
+
+    return {
+        "pr_url": request.pr_url,
+        "dateien_gesamt": len(py_dateien),
+        "reviewt": len(reviews),
+        "reviews": reviews,
+    }
