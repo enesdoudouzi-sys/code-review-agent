@@ -23,11 +23,11 @@ jobs:
           pip install pytest httpx
 
       - name: Check imports
-        run: python -c "import anthropic, fastapi, uvicorn, pydantic"
+        run: python -c "from google import genai; import fastapi, uvicorn, pydantic"
 
       - name: Run tests
         env:
-          ANTHROPIC_API_KEY: test-key-for-ci
+          GOOGLE_API_KEY: test-key-for-ci
         run: pytest tests/ -v
 
   frontend-build:
