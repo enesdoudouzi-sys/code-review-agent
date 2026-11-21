@@ -1,13 +1,15 @@
-"""Code-Review-Agent – agentic loop mit Claude API und Tool Use."""
+"""Code-Review-Agent – agentic loop mit Google Gemini API und Tool Use."""
 
 import json
+import os
 from typing import Generator
 
-import anthropic
+import google.generativeai as genai
+from google.generativeai import protos
 
 from werkzeuge import WERKZEUG_DEFINITIONEN, WERKZEUG_MAP
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "gemini-1.5-flash"
 MAX_ITERATIONEN = 10
 
 SYSTEM_PROMPT = """Du bist ein erfahrener Senior-Software-Ingenieur und Code-Reviewer.
@@ -27,59 +29,100 @@ Fehler, fehlende Edge-Case-Behandlung, Verbesserungsvorschläge.
 Sei präzise und actionable. Nutze Bullet Points."""
 
 
+def _build_tool() -> protos.Tool:
+    """Konvertiert unsere Werkzeug-Definitionen in eine Gemini Tool-Definition."""
+    declarations = []
+    for w in WERKZEUG_DEFINITIONEN:
+        props = {}
+        for name, schema in w["input_schema"]["properties"].items():
+            props[name] = protos.Schema(
+                type=protos.Type.STRING,
+                description=schema.get("description", ""),
+            )
+        declarations.append(
+            protos.FunctionDeclaration(
+                name=w["name"],
+                description=w["description"],
+                parameters=protos.Schema(
+                    type=protos.Type.OBJECT,
+                    properties=props,
+                    required=w["input_schema"].get("required", []),
+                ),
+            )
+        )
+    return protos.Tool(function_declarations=declarations)
+
+
+def _get_model() -> genai.GenerativeModel:
+    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+    return genai.GenerativeModel(
+        model_name=MODEL,
+        system_instruction=SYSTEM_PROMPT,
+        tools=[_build_tool()],
+    )
+
+
+def _ausfuehren(name: str, args: dict) -> dict:
+    funktion = WERKZEUG_MAP.get(name)
+    if funktion:
+        return funktion(**args)
+    return {"fehler": f"Unbekanntes Werkzeug: {name}"}
+
+
+def _fn_calls(antwort) -> list:
+    """Gibt alle Teile mit einem echten function_call zurück."""
+    result = []
+    for part in antwort.parts:
+        try:
+            if part.function_call.name:
+                result.append(part)
+        except Exception:
+            pass
+    return result
+
+
 def review(code: str, dateiname: str = "code.py") -> str:
     """Führt einen vollständigen Code-Review durch und gibt den Report zurück."""
-    client = anthropic.Anthropic()
-    nachrichten = [
+    model = _get_model()
+    contents = [
         {
             "role": "user",
-            "content": f"Bitte reviewe folgenden Code aus der Datei `{dateiname}`:\n\n```\n{code}\n```",
+            "parts": [f"Bitte reviewe folgenden Code aus der Datei `{dateiname}`:\n\n```\n{code}\n```"],
         }
     ]
 
     for _ in range(MAX_ITERATIONEN):
-        antwort = client.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            tools=WERKZEUG_DEFINITIONEN,
-            messages=nachrichten,
-        )
+        antwort = model.generate_content(contents)
+        contents.append({"role": "model", "parts": antwort.parts})
 
-        nachrichten.append({"role": "assistant", "content": antwort.content})
+        aufrufe = _fn_calls(antwort)
+        if not aufrufe:
+            return antwort.text
 
-        if antwort.stop_reason == "end_turn":
-            for block in antwort.content:
-                if hasattr(block, "text"):
-                    return block.text
-            return "(kein Text erhalten)"
-
-        if antwort.stop_reason == "tool_use":
-            ergebnisse = []
-            for block in antwort.content:
-                if block.type != "tool_use":
-                    continue
-                funktion = WERKZEUG_MAP.get(block.name)
-                ergebnis = funktion(**block.input) if funktion else {"fehler": f"Unbekanntes Werkzeug: {block.name}"}
-                ergebnisse.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(ergebnis, ensure_ascii=False),
-                    }
+        fn_responses = []
+        for part in aufrufe:
+            fc = part.function_call
+            ergebnis = _ausfuehren(fc.name, dict(fc.args))
+            fn_responses.append(
+                protos.Part(
+                    function_response=protos.FunctionResponse(
+                        name=fc.name,
+                        response={"result": json.dumps(ergebnis, ensure_ascii=False)},
+                    )
                 )
-            nachrichten.append({"role": "user", "content": ergebnisse})
+            )
+        contents.append({"role": "user", "parts": fn_responses})
 
     return "(Max. Iterationen erreicht)"
 
 
 def review_stream(code: str, dateiname: str = "code.py") -> Generator[str, None, None]:
     """Streamt den Review-Prozess als Server-Sent Events."""
-    client = anthropic.Anthropic()
-    nachrichten = [
+    model = _get_model()
+    contents = [
         {
             "role": "user",
-            "content": f"Bitte reviewe folgenden Code aus der Datei `{dateiname}`:\n\n```\n{code}\n```",
+            "parts": [f"Bitte reviewe folgenden Code aus der Datei `{dateiname}`:\n\n```\n{code}\n```"],
         }
     ]
 
@@ -91,44 +134,35 @@ def review_stream(code: str, dateiname: str = "code.py") -> Generator[str, None,
     for iteration in range(MAX_ITERATIONEN):
         yield event({"type": "thinking", "iteration": iteration + 1})
 
-        antwort = client.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            tools=WERKZEUG_DEFINITIONEN,
-            messages=nachrichten,
-        )
+        antwort = model.generate_content(contents)
+        contents.append({"role": "model", "parts": antwort.parts})
 
-        nachrichten.append({"role": "assistant", "content": antwort.content})
-
-        if antwort.stop_reason == "end_turn":
-            for block in antwort.content:
-                if hasattr(block, "text"):
-                    yield event({"type": "report", "content": block.text})
+        aufrufe = _fn_calls(antwort)
+        if not aufrufe:
+            yield event({"type": "report", "content": antwort.text})
             yield event({"type": "done"})
             return
 
-        if antwort.stop_reason == "tool_use":
-            ergebnisse = []
-            for block in antwort.content:
-                if block.type != "tool_use":
-                    continue
+        fn_responses = []
+        for part in aufrufe:
+            fc = part.function_call
+            args = dict(fc.args)
 
-                yield event({"type": "tool_call", "name": block.name, "input": block.input})
+            yield event({"type": "tool_call", "name": fc.name, "input": args})
 
-                funktion = WERKZEUG_MAP.get(block.name)
-                ergebnis = funktion(**block.input) if funktion else {"fehler": f"Unbekanntes Werkzeug: {block.name}"}
+            ergebnis = _ausfuehren(fc.name, args)
 
-                yield event({"type": "tool_result", "name": block.name, "result": ergebnis})
+            yield event({"type": "tool_result", "name": fc.name, "result": ergebnis})
 
-                ergebnisse.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(ergebnis, ensure_ascii=False),
-                    }
+            fn_responses.append(
+                protos.Part(
+                    function_response=protos.FunctionResponse(
+                        name=fc.name,
+                        response={"result": json.dumps(ergebnis, ensure_ascii=False)},
+                    )
                 )
-            nachrichten.append({"role": "user", "content": ergebnisse})
+            )
+        contents.append({"role": "user", "parts": fn_responses})
 
     yield event({"type": "error", "message": "Max. Iterationen erreicht"})
 
