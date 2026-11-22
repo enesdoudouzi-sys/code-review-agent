@@ -9,7 +9,7 @@ from google.genai import types
 
 from werkzeuge import WERKZEUG_DEFINITIONEN, WERKZEUG_MAP
 
-MODEL = "gemini-1.5-flash"
+MODEL = "models/gemini-3.5-flash"
 MAX_ITERATIONEN = 10
 
 SYSTEM_PROMPT = """Du bist ein erfahrener Senior-Software-Ingenieur und Code-Reviewer.
